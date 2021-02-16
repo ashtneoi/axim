@@ -57,5 +57,12 @@ fn main() {
         }
     }
 
-    println!("{:?}", hasher.finalize().as_slice());
+    let hash = hasher.finalize();
+    let hash_bytes = hash.as_slice();
+
+    let mut spec = data_encoding::Specification::new();
+    spec.symbols.push_str(
+        &"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz@%");
+    let encoding = spec.encoding().unwrap();
+    println!("{}", encoding.encode(hash_bytes));
 }
