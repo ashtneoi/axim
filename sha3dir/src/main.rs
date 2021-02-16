@@ -1,7 +1,7 @@
 use sha3::{Digest, Sha3_256};
 use std::collections::VecDeque;
 use std::env::args;
-use std::fs::{File, read_dir};
+use std::fs::{File, read_dir, read_link};
 use std::io::{self, prelude::*};
 use std::path::PathBuf;
 use std::os::unix::ffi::OsStrExt;
@@ -11,9 +11,9 @@ fn main() {
     assert_eq!(argv.len(), 2);
     let mut hasher = Sha3_256::new();
     let mut queue = VecDeque::new();
-    queue.push_back(PathBuf::from(&argv[1]));
+    let top = &argv[1];
+    queue.push_back(PathBuf::from(top));
     while !queue.is_empty() {
-        println!("{:?}", &queue);
         let mut entries: Vec<_> =
             read_dir(queue.pop_front().unwrap())
             .unwrap()
@@ -32,10 +32,11 @@ fn main() {
             let len = entry.1.metadata().unwrap().len();
             hasher.update(&len.to_le_bytes());
             let path = entry.1.path();
-            hasher.update(path.as_os_str().as_bytes());
+            let stripped_path = path.strip_prefix(top).unwrap();
+            hasher.update(stripped_path.as_os_str().as_bytes());
             if file_type.is_file() {
                 let mut f = File::open(&path).unwrap();
-                const BLOCK_SIZE: usize = 8192;
+                const BLOCK_SIZE: usize = 1<<12;
                 let mut buf = vec![0_u8; BLOCK_SIZE];
                 loop {
                     match f.read(&mut buf) {
@@ -48,12 +49,15 @@ fn main() {
                         },
                     }
                 }
-                println!("{:?}", entry.0);
+            } else if file_type.is_symlink() {
+                let target = read_link(&path).unwrap();
+                hasher.update(target.as_os_str().as_bytes());
             } else if file_type.is_dir() {
-                println!("{:?}/", &entry.0);
+                hasher.update(b"/");
                 queue.push_back(path);
+            } else {
+                panic!("{:?} file type is unsupported", &path);
             }
-            // TODO: symlinks etc.
         }
     }
 
@@ -64,5 +68,6 @@ fn main() {
     spec.symbols.push_str(
         &"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz@%");
     let encoding = spec.encoding().unwrap();
-    println!("{}", encoding.encode(hash_bytes));
+    let output = encoding.encode(hash_bytes);
+    println!("{}/{}", &output[..2], &output[2..]);
 }
