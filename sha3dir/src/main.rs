@@ -1,29 +1,62 @@
-//use sha3::{Digest, Sha3_256};
+use sha3::{Digest, Sha3_256};
 use std::env::args;
-use std::io;
+use std::io::{self, prelude::*};
+use std::os::unix::io::AsRawFd;
 
 mod nar;
 
+fn isatty<F: AsRawFd>(f: &F) -> bool {
+    let fd = f.as_raw_fd();
+    (unsafe { libc::isatty(fd) }) == 1
+}
+
+fn hash() -> io::Result<()> {
+    let mut hasher = Sha3_256::new();
+
+    let mut stdin = io::stdin();
+    let mut chunk = vec![0; 1<<12];
+    loop {
+        let count = stdin.read(&mut chunk)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&chunk);
+    }
+
+    let hash = hasher.finalize();
+    let hash_bytes = hash.as_slice();
+
+    let mut spec = data_encoding::Specification::new();
+    spec.symbols.push_str(
+        &"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz@%"
+    );
+    let encoding = spec.encoding().unwrap();
+    let output = encoding.encode(hash_bytes);
+    println!("{}/{}", &output[..2], &output[2..]);
+    Ok(())
+}
+
 fn main() {
     let argv: Vec<_> = args().collect();
-    assert_eq!(argv.len(), 2);
-    let top = &argv[1];
+    let cmd = &argv[1];
 
-    let mut writer = io::stdout();
+    let r = if cmd == &"dump-nar" {
+        let top = &argv[2];
+        let mut stdout = io::stdout();
+        if isatty(&stdout) {
+            eprintln!("Error: refusing to dump binary data to a TTY");
+            std::process::exit(1);
+        }
+        crate::nar::dump_nar(&mut stdout, &top.as_ref())
+    } else if cmd == &"hash" {
+        hash()
+    } else {
+        eprintln!("Error: invalid command '{}'", &cmd);
+        std::process::exit(10);
+    };
 
-    crate::nar::dump_nar(&mut writer, &top.as_ref()).unwrap();
-
-/*
- *    let hasher = Sha3_256::new();
- *
- *    let hash = hasher.finalize();
- *    let hash_bytes = hash.as_slice();
- *
- *    let mut spec = data_encoding::Specification::new();
- *    spec.symbols.push_str(
- *        &"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz@%");
- *    let encoding = spec.encoding().unwrap();
- *    let output = encoding.encode(hash_bytes);
- *    println!("{}/{}", &output[..2], &output[2..]);
- */
+    if let Err(e) = r {
+        eprintln!("Error: {}", &e);
+        std::process::exit(1);
+    }
 }
