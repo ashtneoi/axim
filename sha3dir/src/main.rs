@@ -1,7 +1,7 @@
 //use sha3::{Digest, Sha3_256};
 use std::collections::VecDeque;
 use std::env::args;
-use std::fs::{self, DirEntry, File, read_dir};
+use std::fs::{self, DirEntry, File, read_dir, read_link};
 use std::io::{self, prelude::*};
 use std::os::unix::{
     ffi::OsStrExt,
@@ -48,7 +48,10 @@ fn serialise_node<W: Write>(writer: &mut W, entry: &NarEntry)
         io::copy(&mut f, writer)?;
         pad_from_len(writer, len)?;
     } else if file_type.is_symlink() {
-        unimplemented!();
+        serialise_str(writer, b"type")?;
+        serialise_str(writer, b"symlink")?;
+        serialise_str(writer, b"target")?;
+        serialise_str(writer, read_link(&entry.path)?.as_os_str().as_bytes())?;
     } else if file_type.is_dir() {
         serialise_str(writer, b"type")?;
         serialise_str(writer, b"directory")?;
