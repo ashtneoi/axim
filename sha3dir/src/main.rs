@@ -1,73 +1,153 @@
-use sha3::{Digest, Sha3_256};
+//use sha3::{Digest, Sha3_256};
 use std::collections::VecDeque;
 use std::env::args;
-use std::fs::{File, read_dir, read_link};
+use std::fs::{self, DirEntry, File, read_dir};
 use std::io::{self, prelude::*};
+use std::os::unix::{
+    ffi::OsStrExt,
+    fs::PermissionsExt,
+};
 use std::path::PathBuf;
-use std::os::unix::ffi::OsStrExt;
+
+fn pad_from_len<W: Write>(writer: &mut W, len: u64) -> io::Result<()> {
+    let padding = ((len + 7) & !0x7) - len;
+    for _ in 0..padding {
+        writer.write_all(&[0])?;
+    }
+    Ok(())
+}
+
+fn serialise_str<W: Write>(writer: &mut W, x: &[u8])
+    -> io::Result<()>
+{
+    let len: u64 = x.len() as u64;
+    writer.write_all(&len.to_le_bytes())?;
+    writer.write_all(x)?;
+    pad_from_len(writer, len)?;
+    Ok(())
+}
+
+fn serialise_node<W: Write>(writer: &mut W, entry: &NarEntry)
+    -> io::Result<()>
+{
+    let file_type = &entry.file_type;
+    if file_type.is_file() {
+        let metadata = entry.metadata.as_ref().unwrap();
+        serialise_str(writer, b"type")?;
+        serialise_str(writer, b"regular")?;
+        let executable = metadata.permissions().mode() & 0o100;
+        if executable != 0 {
+            serialise_str(writer, b"executable")?;
+            serialise_str(writer, b"")?;
+        }
+        serialise_str(writer, b"contents")?;
+
+        let len = metadata.len();
+        writer.write_all(&len.to_le_bytes())?;
+        let mut f = File::open(&entry.path)?;
+        io::copy(&mut f, writer)?;
+        pad_from_len(writer, len)?;
+    } else if file_type.is_symlink() {
+        unimplemented!();
+    } else if file_type.is_dir() {
+        serialise_str(writer, b"type")?;
+        serialise_str(writer, b"directory")?;
+    }
+    Ok(())
+}
+
+struct NarEntry {
+    path: PathBuf,
+    file_type: fs::FileType,
+    metadata: Option<fs::Metadata>,
+}
+
+impl NarEntry {
+    fn from_dir_entry(dir_entry: DirEntry) -> io::Result<Self> {
+        let file_type = dir_entry.file_type()?;
+        let metadata = if !file_type.is_dir() {
+            Some(dir_entry.metadata()?)
+        } else {
+            None
+        };
+        Ok(Self {
+            path: dir_entry.path(),
+            file_type,
+            metadata,
+        })
+    }
+}
 
 fn main() {
     let argv: Vec<_> = args().collect();
     assert_eq!(argv.len(), 2);
-    let mut hasher = Sha3_256::new();
-    let mut queue = VecDeque::new();
     let top = &argv[1];
-    queue.push_back(PathBuf::from(top));
-    while !queue.is_empty() {
-        let mut entries: Vec<_> =
-            read_dir(queue.pop_front().unwrap())
-            .unwrap()
-            .map(|x| match x {
-                Ok(e) => (e.file_name(), e),
-                Err(e) => panic!("{:?}", e),
-            })
-            .collect();
 
-        // TODO: Guarantee that Ord for OsString will never change, then
-        // document its behavior.
-        entries.sort_by(|x, y| x.0.cmp(&y.0));
+    let mut nar = io::stdout();
 
-        for entry in entries {
-            let file_type = entry.1.file_type().unwrap();
-            let len = entry.1.metadata().unwrap().len();
-            hasher.update(&len.to_le_bytes());
-            let path = entry.1.path();
-            let stripped_path = path.strip_prefix(top).unwrap();
-            hasher.update(stripped_path.as_os_str().as_bytes());
-            if file_type.is_file() {
-                let mut f = File::open(&path).unwrap();
-                const BLOCK_SIZE: usize = 1<<12;
-                let mut buf = vec![0_u8; BLOCK_SIZE];
-                loop {
-                    match f.read(&mut buf) {
-                        Ok(0) => break,
-                        Ok(count) => hasher.update(&buf[..count]),
-                        Err(e) => {
-                            if e.kind() != io::ErrorKind::Interrupted {
-                                panic!("{:?}", e);
-                            }
-                        },
-                    }
-                }
-            } else if file_type.is_symlink() {
-                let target = read_link(&path).unwrap();
-                hasher.update(target.as_os_str().as_bytes());
-            } else if file_type.is_dir() {
-                hasher.update(b"/");
-                queue.push_back(path);
+    let top_metadata = fs::symlink_metadata(top).unwrap();
+    let mut top_entry = NarEntry {
+        path: top.into(),
+        file_type: top_metadata.file_type(),
+        metadata: None,
+    };
+    if !top_entry.file_type.is_dir() {
+        top_entry.metadata = Some(top_metadata);
+    }
+    let mut stack: Vec<VecDeque<NarEntry>> =
+        vec![vec![top_entry.into()].into()];
+
+    serialise_str(&mut nar, b"nix-archive-1").unwrap();
+    serialise_str(&mut nar, b"(").unwrap();
+
+    while !stack.is_empty() {
+        if let Some(entry) = stack.last_mut().unwrap().pop_front() {
+            if stack.len() > 1 {
+                serialise_str(&mut nar, b"entry").unwrap();
+                serialise_str(&mut nar, b"(").unwrap();
+                serialise_str(&mut nar, b"name").unwrap();
+                let name = entry.path.file_name().unwrap();
+                serialise_str(&mut nar, name.as_bytes()).unwrap();
+                serialise_str(&mut nar, b"node").unwrap();
+                serialise_str(&mut nar, b"(").unwrap();
+            }
+            serialise_node(&mut nar, &entry).unwrap();
+            if entry.file_type.is_dir() {
+                let mut entries: Vec<_> = read_dir(&entry.path).unwrap().map(
+                    |x| NarEntry::from_dir_entry(x.unwrap()).unwrap()
+                ).collect();
+                entries.sort_unstable_by(
+                    |x, y| x.path.file_name().cmp(&y.path.file_name()));
+                stack.push(entries.into());
             } else {
-                panic!("{:?} file type is unsupported", &path);
+                if stack.len() > 1 {
+                    serialise_str(&mut nar, b")").unwrap(); // node
+                    serialise_str(&mut nar, b")").unwrap(); // entry
+                }
+            }
+        } else {
+            stack.pop().unwrap();
+
+            if stack.len() > 1 {
+                serialise_str(&mut nar, b")").unwrap(); // node
+                serialise_str(&mut nar, b")").unwrap(); // entry
             }
         }
     }
 
-    let hash = hasher.finalize();
-    let hash_bytes = hash.as_slice();
+    serialise_str(&mut nar, b")").unwrap();
 
-    let mut spec = data_encoding::Specification::new();
-    spec.symbols.push_str(
-        &"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz@%");
-    let encoding = spec.encoding().unwrap();
-    let output = encoding.encode(hash_bytes);
-    println!("{}/{}", &output[..2], &output[2..]);
+/*
+ *    let hasher = Sha3_256::new();
+ *
+ *    let hash = hasher.finalize();
+ *    let hash_bytes = hash.as_slice();
+ *
+ *    let mut spec = data_encoding::Specification::new();
+ *    spec.symbols.push_str(
+ *        &"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz@%");
+ *    let encoding = spec.encoding().unwrap();
+ *    let output = encoding.encode(hash_bytes);
+ *    println!("{}/{}", &output[..2], &output[2..]);
+ */
 }
