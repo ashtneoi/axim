@@ -1,6 +1,6 @@
 use sha3::{Digest, Sha3_256};
 use std::env::args;
-use std::io::{self, prelude::*};
+use std::io::{self, ErrorKind, prelude::*};
 use std::os::unix::io::AsRawFd;
 
 mod nar;
@@ -10,13 +10,24 @@ fn isatty<F: AsRawFd>(f: &F) -> bool {
     (unsafe { libc::isatty(fd) }) == 1
 }
 
+fn read_retry<R: Read>(reader: &mut R, buf: &mut [u8]) -> io::Result<usize> {
+    loop {
+        match reader.read(buf) {
+            Ok(count) => return Ok(count),
+            Err(e) => if e.kind() == ErrorKind::Interrupted {
+                return Err(e);
+            },
+        }
+    }
+}
+
 fn hash() -> io::Result<()> {
     let mut hasher = Sha3_256::new();
 
     let mut stdin = io::stdin();
     let mut chunk = vec![0; 1<<12];
     loop {
-        let count = stdin.read(&mut chunk)?;
+        let count = read_retry(&mut stdin, &mut chunk)?;
         if count == 0 {
             break;
         }
