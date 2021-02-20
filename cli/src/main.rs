@@ -20,7 +20,7 @@ fn hash() -> io::Result<()> {
         if count == 0 {
             break;
         }
-        hasher.update(&chunk);
+        hasher.update(&chunk[..count]);
     }
 
     let hash = hasher.finalize();
