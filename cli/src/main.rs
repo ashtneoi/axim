@@ -71,7 +71,14 @@ fn do_cmd(argv: &[String]) -> io::Result<()> {
         }
         crate::nar::dump_nar(&mut stdout, &top.as_ref())?;
     } else if cmd == "hash" {
-        println!("{}", hash(&mut io::stdin())?);
+        let mut f: Box<dyn Read>;
+        if &argv[2] == "-" {
+            f = Box::new(io::stdin());
+        } else {
+            f = Box::new(File::open(&argv[2])?);
+        }
+
+        println!("{}", hash(&mut f)?);
     } else if cmd == "set-meta-output-ids" {
         static TYPES: &'static str = "nvxbioh";
 
