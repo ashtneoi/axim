@@ -83,7 +83,6 @@ fn do_cmd(argv: &[String]) -> io::Result<()> {
             f = Box::new(File::open(&argv[2])?);
         }
 
-        let mut hasher = Hasher::new();
         // TODO: We can use .map() for this, if we want.
         for line in io::BufReader::new(f).lines() {
             let line = line?;
@@ -102,14 +101,18 @@ fn do_cmd(argv: &[String]) -> io::Result<()> {
             } else {
                 line
             };
-            hasher.update(line.as_bytes());
-            hasher.update(b"\n");
             meta_lines.push(line);
         }
 
         meta_lines.sort_unstable_by(|x, y|
             TYPES.find(&x[0..1]).unwrap().cmp(&TYPES.find(&y[0..1]).unwrap())
         );
+
+        let mut hasher = Hasher::new();
+        for line in &meta_lines {
+            hasher.update(line.as_bytes());
+            hasher.update(b"\n");
+        }
 
         for line in meta_lines {
             let mut fields = line.splitn(3, " ");
