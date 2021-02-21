@@ -75,7 +75,12 @@ fn do_cmd(argv: &[String]) -> io::Result<()> {
         static TYPES: &'static str = "nvxbioh";
 
         let mut meta_lines: Vec<String> = vec![];
-        let f = File::open(&argv[2])?;
+        let f: Box<dyn Read>;
+        if &argv[2] == "-" {
+            f = Box::new(io::stdin());
+        } else {
+            f = Box::new(File::open(&argv[2])?);
+        }
 
         let mut hasher = Hasher::new();
         // TODO: We can use .map() for this, if we want.
