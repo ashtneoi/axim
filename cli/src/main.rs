@@ -27,7 +27,7 @@ impl Hasher {
     fn finalize(self) -> String {
         let mut spec = data_encoding::Specification::new();
         spec.symbols.push_str(
-            "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz@%"
+            "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz@+"
         );
         let encoding = spec.encoding().unwrap();
         let hash_wrapper = self.0.finalize();
