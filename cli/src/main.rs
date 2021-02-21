@@ -111,9 +111,7 @@ fn do_cmd(argv: &[String]) -> io::Result<()> {
             meta_lines.push(line);
         }
 
-        meta_lines.sort_unstable_by(|x, y|
-            TYPES.find(&x[0..1]).unwrap().cmp(&TYPES.find(&y[0..1]).unwrap())
-        );
+        meta_lines.sort_unstable_by_key(|x| TYPES.find(&x[0..1]).unwrap());
 
         let mut hasher = Hasher::new();
         for line in &meta_lines {
