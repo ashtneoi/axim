@@ -72,7 +72,7 @@ fn do_cmd(argv: &[String]) -> io::Result<()> {
         crate::nar::dump_nar(&mut stdout, &top.as_ref())?;
     } else if cmd == "hash" {
         println!("{}", hash(&mut io::stdin())?);
-    } else if cmd == "fix-meta" {
+    } else if cmd == "set-meta-output-ids" {
         static TYPES: &'static str = "nvxbioh";
 
         let mut meta_lines: Vec<String> = vec![];
