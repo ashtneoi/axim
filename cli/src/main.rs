@@ -12,6 +12,7 @@ fn isatty<F: AsRawFd>(f: &F) -> bool {
     (unsafe { libc::isatty(fd) }) == 1
 }
 
+#[derive(Clone)]
 struct Hasher(Sha3_256);
 
 impl Hasher {
@@ -95,17 +96,16 @@ fn do_cmd(argv: &[String]) -> io::Result<()> {
             if !(typ.len() == 1 && TYPES.contains(typ)) {
                 bad_line(&line);
             }
-            let line = if typ == "o" {
+            let line = if typ == "o" || typ == "h" {
                 let alias = fields.next().unwrap_or_else(|| bad_line(&line));
-                format!("o {} -", alias)
+                format!("{} {} -", typ, alias)
             } else {
                 line
             };
-            hasher.update(&line.as_bytes());
+            hasher.update(line.as_bytes());
             hasher.update(b"\n");
             meta_lines.push(line);
         }
-        let hash = hasher.finalize();
 
         meta_lines.sort_unstable_by(|x, y|
             TYPES.find(&x[0..1]).unwrap().cmp(&TYPES.find(&y[0..1]).unwrap())
@@ -116,7 +116,12 @@ fn do_cmd(argv: &[String]) -> io::Result<()> {
             let typ = fields.next().unwrap();
             if typ == "o" {
                 let alias = fields.next().unwrap();
-                println!("o {} {}", alias, hash);
+                let mut id_hasher = hasher.clone();
+                id_hasher.update(b"z ");
+                id_hasher.update(&alias.as_bytes());
+                id_hasher.update(b"\n");
+                let id = id_hasher.finalize();
+                println!("o {} {}", alias, id);
             } else {
                 println!("{}", line);
             }
