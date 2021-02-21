@@ -72,6 +72,8 @@ fn do_cmd(argv: &[String]) -> io::Result<()> {
     } else if cmd == "hash" {
         println!("{}", hash(&mut io::stdin())?);
     } else if cmd == "fix-meta" {
+        static TYPES: &'static str = "nvxbioh";
+
         let mut meta_lines: Vec<String> = vec![];
         let f = File::open(&argv[2])?;
 
@@ -85,6 +87,9 @@ fn do_cmd(argv: &[String]) -> io::Result<()> {
             }
             let mut fields = line.splitn(3, " ");
             let typ = fields.next().unwrap_or_else(|| bad_line(&line));
+            if !(typ.len() == 1 && TYPES.contains(typ)) {
+                bad_line(&line);
+            }
             let line = if typ == "o" {
                 let alias = fields.next().unwrap_or_else(|| bad_line(&line));
                 format!("o {} -", alias)
@@ -96,6 +101,10 @@ fn do_cmd(argv: &[String]) -> io::Result<()> {
             meta_lines.push(line);
         }
         let hash = hasher.finalize();
+
+        meta_lines.sort_unstable_by(|x, y|
+            TYPES.find(&x[0..1]).unwrap().cmp(&TYPES.find(&y[0..1]).unwrap())
+        );
 
         for line in meta_lines {
             let mut fields = line.splitn(3, " ");
