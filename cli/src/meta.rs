@@ -162,6 +162,9 @@ impl Meta {
             }
         }
 
+        inputs.sort_unstable_by(|x, y| x.alias.cmp(&y.alias));
+        outputs.sort_unstable_by(|x, y| x.alias.cmp(&y.alias));
+
         let mut obj = Self {
             name: name.ok_or(MetaParseError::MissingName)?,
             version: version.ok_or(MetaParseError::MissingVersion)?,
@@ -172,7 +175,6 @@ impl Meta {
         };
 
         if obj.option("fixed-digest") {
-            // FIXME: Set `o` values to `d` values (error if already set).
             for output in &mut obj.outputs {
                 if output.id.is_some() {
                     // TODO: workshop this message
@@ -192,8 +194,7 @@ impl Meta {
                 }
             }
         } else {
-            // FIXME: ???
-            unimplemented!();
+            obj.set_output_ids();
         }
 
         Ok(obj)
@@ -201,6 +202,26 @@ impl Meta {
 
     fn option(&self, opt: &str) -> bool {
         self.opts.iter().find(|&opt2| opt2 == opt).is_some()
+    }
+
+    fn set_output_ids(&mut self) {
+        let mut hasher = crate::Hasher::new();
+        writeln!(hasher, "n {}", &self.name).unwrap();
+        writeln!(hasher, "v {}", &self.version).unwrap();
+        for opt in &self.opts {
+            writeln!(hasher, "x {}", opt).unwrap();
+        }
+        for input in &self.inputs {
+            writeln!(hasher, "i {} {}", &input.alias, &input.id).unwrap();
+        }
+        if let Some(ref build_cmd) = self.build_cmd {
+            writeln!(hasher, "b {}", build_cmd).unwrap();
+        }
+        for output in &mut self.outputs {
+            let mut hasher = hasher.clone();
+            writeln!(hasher, "z {}", &output.alias).unwrap();
+            output.id = Some(hasher.finalize());
+        }
     }
 
     pub(crate) fn dump(&self, mut writer: impl Write) -> io::Result<()> {
