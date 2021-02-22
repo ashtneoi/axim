@@ -5,6 +5,7 @@ use std::io::{self, ErrorKind, prelude::*};
 use std::os::unix::io::AsRawFd;
 use std::process::exit;
 
+mod meta;
 mod nar;
 
 fn isatty<F: AsRawFd>(f: &F) -> bool {
@@ -79,10 +80,7 @@ fn do_cmd(argv: &[String]) -> io::Result<()> {
         }
 
         println!("{}", hash(&mut f)?);
-    } else if cmd == "set-meta-output-ids" {
-        static TYPES: &'static str = "nvxbioh";
-
-        let mut meta_lines: Vec<String> = vec![];
+    } else if cmd == "normalize-meta" {
         let f: Box<dyn Read>;
         if &argv[2] == "-" {
             f = Box::new(io::stdin());
@@ -90,49 +88,13 @@ fn do_cmd(argv: &[String]) -> io::Result<()> {
             f = Box::new(File::open(&argv[2])?);
         }
 
-        // TODO: We can use .map() for this, if we want.
-        for line in io::BufReader::new(f).lines() {
-            let line = line?;
-            fn bad_line(line: &str) -> ! {
-                eprintln!("Error: invalid line '{}'", line);
+        match meta::Meta::parse(f) {
+            Err(meta::MetaParseError::IoError(e)) => return Err(e),
+            Err(e) => {
+                eprintln!("Error: {:?}", &e);
                 exit(1);
-            }
-            let mut fields = line.splitn(3, " ");
-            let typ = fields.next().unwrap_or_else(|| bad_line(&line));
-            if !(typ.len() == 1 && TYPES.contains(typ)) {
-                bad_line(&line);
-            }
-            let line = if typ == "o" || typ == "h" {
-                let alias = fields.next().unwrap_or_else(|| bad_line(&line));
-                format!("{} {} -", typ, alias)
-            } else {
-                line
-            };
-            meta_lines.push(line);
-        }
-
-        meta_lines.sort_unstable_by_key(|x| TYPES.find(&x[0..1]).unwrap());
-
-        let mut hasher = Hasher::new();
-        for line in &meta_lines {
-            hasher.update(line.as_bytes());
-            hasher.update(b"\n");
-        }
-
-        for line in meta_lines {
-            let mut fields = line.splitn(3, " ");
-            let typ = fields.next().unwrap();
-            if typ == "o" {
-                let alias = fields.next().unwrap();
-                let mut id_hasher = hasher.clone();
-                id_hasher.update(b"z ");
-                id_hasher.update(&alias.as_bytes());
-                id_hasher.update(b"\n");
-                let id = id_hasher.finalize();
-                println!("o {} {}", alias, id);
-            } else {
-                println!("{}", line);
-            }
+            },
+            Ok(m) => m.dump(io::stdout())?,
         }
     } else {
         eprintln!("Error: invalid command '{}'", cmd);
