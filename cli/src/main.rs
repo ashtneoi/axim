@@ -1,6 +1,7 @@
 use std::env::args;
 use std::fs;
 use std::io::{self, ErrorKind, prelude::*};
+use std::os::unix::fs::symlink;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::exit;
@@ -46,9 +47,33 @@ fn add_file(name: &str, version: &str, file_path: impl AsRef<Path>)
     io::copy(&mut src_file, &mut dest_file)?;
     dest_file.sync_data()?;
 
-    let mut meta_file = fs::File::create(&output_dir.with_extension("meta"))?;
+    let mut hasher = crate::hash::Hasher::new();
+    m.dump(&mut hasher)?;
+    let meta_digest = hasher.finalize();
+
+    let axim_dir: &Path = "/axim".as_ref();
+    let meta_file_path = axim_dir.join(meta_digest).with_extension("meta");
+    // If we didn't remove the file first, a symlink cycle would prevent us
+    // from opening the file.
+    match fs::remove_file(&meta_file_path) {
+        Err(e) if e.kind() == ErrorKind::NotFound => (),
+        Err(e) => return Err(e),
+        Ok(_) => (),
+    }
+    let mut meta_file = fs::File::create(&meta_file_path)?;
     m.dump(&mut meta_file)?;
     meta_file.sync_data()?;
+
+    let meta_file_link_path = output_dir.with_extension("meta");
+    fs::create_dir_all(&meta_file_link_path.parent().unwrap())?;
+    match fs::remove_file(&meta_file_link_path) {
+        Err(e) if e.kind() == ErrorKind::NotFound => (),
+        Err(e) => return Err(e),
+        Ok(_) => (),
+    }
+    symlink(meta_file_path, &meta_file_link_path)?;
+    let meta_file_link = fs::File::open(&meta_file_link_path)?;
+    meta_file_link.sync_data()?;
 
     println!("{}", output_dir.to_str().unwrap());
 
@@ -91,10 +116,7 @@ fn do_cmd(argv: &[String]) -> io::Result<()> {
             Ok(m) => m.dump(io::stdout())?,
         }
     } else if cmd == "add-file" {
-        if let Err(e) = add_file(&argv[2], &argv[3], &argv[4]) {
-            eprintln!("Error: {:?}", &e);
-            exit(1);
-        }
+        add_file(&argv[2], &argv[3], &argv[4])?;
     } else {
         eprintln!("Error: invalid command '{}'", cmd);
         exit(10);
