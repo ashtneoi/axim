@@ -7,13 +7,6 @@ struct MetaInput {
 }
 
 #[derive(Debug)]
-struct MetaOutput {
-    alias: String,
-    id: Option<String>,
-    digest: Option<String>,
-}
-
-#[derive(Debug)]
 pub enum MetaParseError {
     IoError(io::Error),
     InvalidType { line: usize }, // zero-based
@@ -21,10 +14,9 @@ pub enum MetaParseError {
     DuplicateType { line: usize }, // zero-based
     DuplicateAlias { line: usize }, // zero-based
     InvalidOption { line: usize }, // zero-based
-    InvalidId { line: usize }, // zero-based
     MissingName,
     MissingVersion,
-    InvalidData(String),
+    _InvalidData(String),
 }
 
 impl From<io::Error> for MetaParseError {
@@ -40,7 +32,9 @@ pub(crate) struct Meta {
     opts: Vec<String>,
     build_cmd: Option<String>,
     inputs: Vec<MetaInput>,
-    outputs: Vec<MetaOutput>,
+    output_id: Option<String>,
+    output_digest: Option<String>,
+    runtime_deps: Vec<String>,
 }
 
 impl Meta {
@@ -50,7 +44,9 @@ impl Meta {
         let mut opts = Vec::new();
         let mut build_cmd = None;
         let mut inputs = Vec::new();
-        let mut outputs = Vec::new();
+        let mut output_id = None;
+        let mut output_digest = None;
+        let mut runtime_deps = Vec::new();
 
         for (i, line) in io::BufReader::new(reader).lines().enumerate() {
             let line = line?;
@@ -95,10 +91,6 @@ impl Meta {
                 let id = *fields.get(2).ok_or(
                     MetaParseError::MissingField { line: i })?;
 
-                if id == "-" {
-                    return Err(MetaParseError::InvalidId { line: i });
-                }
-
                 // WATCH OUT: This is quadratic time in the number of aliases.
                 let dup = inputs.iter().find(
                     |&&MetaInput { alias: ref a, .. }| a == alias);
@@ -110,60 +102,23 @@ impl Meta {
                     id: id.to_string(),
                 });
             } else if typ == "o" {
-                let alias = fields[1];
-                let id = match fields.get(2) {
-                    Some(&"-") => None,
-                    Some(id) => Some(*id),
-                    None => return Err(
-                        MetaParseError::MissingField { line: i }),
-                };
-
-                // WATCH OUT: This is quadratic time in the number of aliases.
-                let dup = outputs.iter_mut().find(
-                    |&&mut MetaOutput { alias: ref a, .. }| a == alias);
-                if let Some(dup) = dup {
-                    if dup.id.is_some() {
-                        return Err(MetaParseError::DuplicateAlias { line: i });
-                    }
-                    dup.id = id.map(|x| x.to_string());
-                } else {
-                    outputs.push(MetaOutput {
-                        alias: alias.to_string(),
-                        id: id.map(|x| x.to_string()),
-                        digest: None,
-                    });
+                if output_id.is_some() {
+                    return Err(MetaParseError::DuplicateType { line: i });
                 }
+                output_id = Some(line["o ".len()..].to_string());
             } else if typ == "d" {
-                let alias = fields[1];
-                let digest = match fields.get(2) {
-                    Some(&"-") => None,
-                    Some(digest) => Some(*digest),
-                    None => return Err(
-                        MetaParseError::MissingField { line: i }),
-                };
-
-                // WATCH OUT: This is quadratic time in the number of aliases.
-                let dup = outputs.iter_mut().find(
-                    |&&mut MetaOutput { alias: ref a, .. }| a == alias);
-                if let Some(dup) = dup {
-                    if dup.digest.is_some() {
-                        return Err(MetaParseError::DuplicateAlias { line: i });
-                    }
-                    dup.digest = digest.map(|x| x.to_string());
-                } else {
-                    outputs.push(MetaOutput {
-                        alias: alias.to_string(),
-                        id: None,
-                        digest: digest.map(|x| x.to_string()),
-                    });
+                if output_digest.is_some() {
+                    return Err(MetaParseError::DuplicateType { line: i });
                 }
+                output_digest = Some(line["d ".len()..].to_string());
+            } else if typ == "r" {
+                runtime_deps.push(line["r ".len()..].to_string());
             } else {
                 return Err(MetaParseError::InvalidType { line: i });
             }
         }
 
         inputs.sort_unstable_by(|x, y| x.alias.cmp(&y.alias));
-        outputs.sort_unstable_by(|x, y| x.alias.cmp(&y.alias));
 
         let mut obj = Self {
             name: name.ok_or(MetaParseError::MissingName)?,
@@ -171,40 +126,25 @@ impl Meta {
             opts,
             build_cmd,
             inputs,
-            outputs,
+            output_id,
+            output_digest,
+            runtime_deps,
         };
 
-        if obj.option("fixed-digest") {
-            for output in &mut obj.outputs {
-                if output.id.is_some() {
-                    // TODO: workshop this message
-                    return Err(MetaParseError::InvalidData(
-                        "fixed-digest requires output IDs to be unset"
-                        .to_string()
-                    ));
-                }
-                if let Some(ref digest) = output.digest {
-                    output.id = Some(digest.to_string());
-                } else {
-                    // TODO: workshop this message
-                    return Err(MetaParseError::InvalidData(
-                        "fixed-digest requires output digests to be set"
-                        .to_string()
-                    ));
-                }
-            }
-        } else {
-            obj.set_output_ids();
+        if obj.output_id.is_none() {
+            obj.set_output_id();
         }
 
         Ok(obj)
     }
 
-    fn option(&self, opt: &str) -> bool {
+    fn _option(&self, opt: &str) -> bool {
         self.opts.iter().find(|&opt2| opt2 == opt).is_some()
     }
 
-    fn set_output_ids(&mut self) {
+    fn set_output_id(&mut self) {
+        assert_eq!(self.output_id, None);
+
         let mut hasher = crate::Hasher::new();
         writeln!(hasher, "n {}", &self.name).unwrap();
         writeln!(hasher, "v {}", &self.version).unwrap();
@@ -217,11 +157,7 @@ impl Meta {
         if let Some(ref build_cmd) = self.build_cmd {
             writeln!(hasher, "b {}", build_cmd).unwrap();
         }
-        for output in &mut self.outputs {
-            let mut hasher = hasher.clone();
-            writeln!(hasher, "z {}", &output.alias).unwrap();
-            output.id = Some(hasher.finalize());
-        }
+        self.output_id = Some(hasher.finalize());
     }
 
     pub(crate) fn dump(&self, mut writer: impl Write) -> io::Result<()> {
@@ -236,16 +172,11 @@ impl Meta {
         if let Some(ref build_cmd) = self.build_cmd {
             writeln!(writer, "b {}", build_cmd)?;
         }
-        for output in &self.outputs {
-            writeln!(
-                writer,
-                "o {} {}",
-                &output.alias,
-                match output.id { Some(ref s) => s.as_ref(), None => "-" },
-            )?;
-            if let Some(ref digest) = output.digest {
-                writeln!(writer, "d {} {}", &output.alias, digest)?;
-            }
+        if let Some(ref output_id) = self.output_id {
+            writeln!(writer, "o {}", output_id)?;
+        }
+        if let Some(ref output_digest) = self.output_digest {
+            writeln!(writer, "d {}", output_digest)?;
         }
         Ok(())
     }
