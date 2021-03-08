@@ -1,0 +1,8 @@
+n <name>
+v <version>
+x <option>
+i <alias> <id>
+b <cmd>...
+o <id>
+d <digest>
+r <id>
