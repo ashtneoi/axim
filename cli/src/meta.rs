@@ -1,7 +1,8 @@
 use std::io::{self, prelude::*};
+use std::path::Path;
 
 #[derive(Debug)]
-struct MetaInput {
+pub(crate) struct MetaInput {
     alias: String,
     id: String,
 }
@@ -27,14 +28,14 @@ impl From<io::Error> for MetaParseError {
 
 #[derive(Debug)]
 pub(crate) struct Meta {
-    name: String,
-    version: String,
-    opts: Vec<String>,
-    build_cmd: Option<String>,
-    inputs: Vec<MetaInput>,
-    output_id: Option<String>,
-    output_digest: Option<String>,
-    runtime_deps: Vec<String>,
+    pub(crate) name: String,
+    pub(crate) version: String,
+    pub(crate) opts: Vec<String>,
+    pub(crate) build_cmd: Option<String>,
+    pub(crate) inputs: Vec<MetaInput>,
+    pub(crate) output_id: Option<String>,
+    pub(crate) output_digest: Option<String>,
+    pub(crate) runtime_deps: Vec<String>,
 }
 
 impl Meta {
@@ -142,10 +143,10 @@ impl Meta {
         self.opts.iter().find(|&opt2| opt2 == opt).is_some()
     }
 
-    fn set_output_id(&mut self) {
+    pub(crate) fn set_output_id(&mut self) {
         assert_eq!(self.output_id, None);
 
-        let mut hasher = crate::Hasher::new();
+        let mut hasher = crate::hash::Hasher::new();
         writeln!(hasher, "n {}", &self.name).unwrap();
         writeln!(hasher, "v {}", &self.version).unwrap();
         for opt in &self.opts {
@@ -158,6 +159,16 @@ impl Meta {
             writeln!(hasher, "b {}", build_cmd).unwrap();
         }
         self.output_id = Some(hasher.finalize());
+    }
+
+    pub(crate) fn do_fixed_digest(&mut self, file_path: impl AsRef<Path>)
+        -> io::Result<()>
+    {
+        let mut hasher = crate::hash::Hasher::new();
+        crate::nar::dump_file_nar(&mut hasher, file_path.as_ref())?;
+        self.output_id = Some("-".to_string());
+        self.output_digest = Some(hasher.finalize());
+        Ok(())
     }
 
     pub(crate) fn dump(&self, mut writer: impl Write) -> io::Result<()> {

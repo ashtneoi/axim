@@ -134,3 +134,39 @@ pub(crate) fn dump_nar<W: Write>(mut writer: &mut W, top: &Path)
 
     Ok(())
 }
+
+pub(crate) fn dump_file_nar<W: Write>(mut writer: &mut W, path: &Path)
+    -> io::Result<()>
+{
+    let metadata = fs::symlink_metadata(path)?;
+    let mut entry = NarEntry {
+        path: path.into(),
+        file_type: metadata.file_type(),
+        metadata: None,
+    };
+    assert!(entry.file_type.is_file());
+    entry.metadata = Some(metadata);
+
+    serialise_str(&mut writer, b"nix-archive-1")?;
+    serialise_str(&mut writer, b"(")?;
+
+    serialise_str(writer, b"type")?;
+    serialise_str(writer, b"directory")?;
+
+    serialise_str(&mut writer, b"entry")?;
+    serialise_str(&mut writer, b"(")?;
+    serialise_str(&mut writer, b"name")?;
+    let name = entry.path.file_name().unwrap();
+    serialise_str(&mut writer, name.as_bytes())?;
+    serialise_str(&mut writer, b"node")?;
+    serialise_str(&mut writer, b"(")?;
+
+    serialise_node(&mut writer, &entry)?;
+
+    serialise_str(&mut writer, b")")?; // node
+    serialise_str(&mut writer, b")")?; // entry
+
+    serialise_str(&mut writer, b")")?;
+
+    Ok(())
+}

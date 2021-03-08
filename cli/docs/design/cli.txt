@@ -1,10 +1,13 @@
     axim info <pkg-id>|<meta-file>|-
 
+Prints information about the specified package.
+
     axim add-meta <meta-file>|- <symlink>
 
 Adds the provided meta file to the store, along with the meta files for its
-transitive inputs, and prints its id. Inputs are searched for in repo snapshots
-from newest to oldest. <symlink> must not exist.
+transitive inputs, and prints its id. If any transitive inputs are not present
+in the store, they are searched for in repo snapshots from newest to oldest.
+<symlink> must not exist.
 
     axim build <pkg-id> <symlink>
     axim build-at [-w|--write-digest] <pkg-id>|<meta-file>|- <out-dir>
@@ -18,3 +21,8 @@ Builds the specified package and prints its id. <symlink> must not exist and
 
 Adds the specified directory to the store, along with a generated meta file,
 and prints its id.
+
+    axim add-file <name> <version> <file>
+
+Adds the specified file to a new directory in the store, along with a generated
+meta file, and prints its id.

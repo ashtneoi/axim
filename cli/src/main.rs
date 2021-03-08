@@ -1,74 +1,58 @@
-use sha3::{Digest, Sha3_256};
 use std::env::args;
-use std::fs::File;
+use std::fs;
 use std::io::{self, ErrorKind, prelude::*};
 use std::os::unix::io::AsRawFd;
+use std::path::{Path, PathBuf};
 use std::process::exit;
 
-mod meta;
-mod nar;
+pub mod hash;
+pub mod meta;
+pub mod nar;
 
 fn isatty<F: AsRawFd>(f: &F) -> bool {
     let fd = f.as_raw_fd();
     (unsafe { libc::isatty(fd) }) == 1
 }
 
-#[derive(Clone)]
-struct Hasher(Sha3_256);
+fn add_file(name: &str, version: &str, file_path: impl AsRef<Path>)
+    -> io::Result<()>
+{
+    // TODO: The Meta stuff here is pretty messy.
+    let mut m = meta::Meta {
+        name: name.to_string(),
+        version: version.to_string(),
+        opts: Vec::new(),
+        build_cmd: None,
+        inputs: Vec::new(),
+        output_id: None,
+        output_digest: None,
+        runtime_deps: Vec::new(),
+    };
+    m.do_fixed_digest(&file_path)?;
 
-impl Hasher {
-    fn new() -> Self {
-        Self(Sha3_256::new())
-    }
+    let mut output_dir: PathBuf = "/axim/".into();
+    output_dir.push(&m.output_digest.as_ref().unwrap());
 
-    fn update(&mut self, data: impl AsRef<[u8]>) {
-        self.0.update(data);
+    match fs::remove_dir_all(&output_dir) {
+        Err(e) if e.kind() == ErrorKind::NotFound => (),
+        Err(e) => return Err(e),
+        Ok(_) => (),
     }
+    fs::create_dir_all(&output_dir)?;
 
-    fn finalize(self) -> String {
-        let mut spec = data_encoding::Specification::new();
-        spec.symbols.push_str(
-            "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz@+"
-        );
-        let encoding = spec.encoding().unwrap();
-        let hash_wrapper = self.0.finalize();
-        let hash = encoding.encode(hash_wrapper.as_slice());
-        format!("{}/{}", &hash[..2], &hash[2..])
-    }
-}
+    let mut src_file = fs::File::open(&file_path)?;
+    let mut dest_file = fs::File::create(
+        &output_dir.join(file_path.as_ref().file_name().unwrap()))?;
+    io::copy(&mut src_file, &mut dest_file)?;
+    dest_file.sync_data()?;
 
-impl io::Write for Hasher {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.write(buf)
-    }
+    let mut meta_file = fs::File::create(&output_dir.with_extension("meta"))?;
+    m.dump(&mut meta_file)?;
+    meta_file.sync_data()?;
 
-    fn flush(&mut self) -> io::Result<()> {
-        self.0.flush()
-    }
-}
+    println!("{}", output_dir.to_str().unwrap());
 
-fn read_retry<R: Read>(reader: &mut R, buf: &mut [u8]) -> io::Result<usize> {
-    loop {
-        match reader.read(buf) {
-            Ok(count) => return Ok(count),
-            Err(e) => if e.kind() == ErrorKind::Interrupted {
-                return Err(e);
-            },
-        }
-    }
-}
-
-fn hash<R: Read>(reader: &mut R) -> io::Result<String> {
-    let mut hasher = Hasher::new();
-    let mut chunk = vec![0; 1<<12];
-    loop {
-        let count = read_retry(reader, &mut chunk)?;
-        if count == 0 {
-            break;
-        }
-        hasher.update(&chunk[..count]);
-    }
-    Ok(hasher.finalize())
+    Ok(())
 }
 
 fn do_cmd(argv: &[String]) -> io::Result<()> {
@@ -86,16 +70,16 @@ fn do_cmd(argv: &[String]) -> io::Result<()> {
         if &argv[2] == "-" {
             f = Box::new(io::stdin());
         } else {
-            f = Box::new(File::open(&argv[2])?);
+            f = Box::new(fs::File::open(&argv[2])?);
         }
 
-        println!("{}", hash(&mut f)?);
+        println!("{}", hash::hash(&mut f)?);
     } else if cmd == "normalize-meta" {
         let f: Box<dyn Read>;
         if &argv[2] == "-" {
             f = Box::new(io::stdin());
         } else {
-            f = Box::new(File::open(&argv[2])?);
+            f = Box::new(fs::File::open(&argv[2])?);
         }
 
         match meta::Meta::parse(f) {
@@ -105,6 +89,11 @@ fn do_cmd(argv: &[String]) -> io::Result<()> {
                 exit(1);
             },
             Ok(m) => m.dump(io::stdout())?,
+        }
+    } else if cmd == "add-file" {
+        if let Err(e) = add_file(&argv[2], &argv[3], &argv[4]) {
+            eprintln!("Error: {:?}", &e);
+            exit(1);
         }
     } else {
         eprintln!("Error: invalid command '{}'", cmd);
