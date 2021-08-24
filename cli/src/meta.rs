@@ -161,7 +161,7 @@ impl Meta {
         self.output_id = Some(hasher.finalize());
     }
 
-    pub(crate) fn do_fixed_digest(&mut self, file_path: impl AsRef<Path>)
+    pub(crate) fn set_fixed_digest(&mut self, file_path: impl AsRef<Path>)
         -> io::Result<()>
     {
         let mut hasher = crate::hash::Hasher::new();

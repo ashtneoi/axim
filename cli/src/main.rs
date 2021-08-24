@@ -28,7 +28,7 @@ fn add_file(name: &str, version: &str, file_path: impl AsRef<Path>)
         output_digest: None,
         runtime_deps: Vec::new(),
     };
-    m.do_fixed_digest(&file_path)?;
+    m.set_fixed_digest(&file_path)?;
 
     let mut output_dir: PathBuf = "/axim/".into();
     output_dir.push(&m.output_digest.as_ref().unwrap());
