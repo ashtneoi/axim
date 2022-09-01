@@ -1,0 +1,7 @@
+n binutils-static-impure
+v 2.36.1
+x bin=bin
+i -
+i src 2
+i builder 3
+b {builder}/build.sh

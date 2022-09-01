@@ -17,12 +17,14 @@ Builds the specified package and prints its id. <symlink> must not exist and
 
     axim gc
 
+?
+
     axim add-dir <name> <version> <dir>
 
 Adds the specified directory to the store, along with a generated meta file,
 and prints its id.
 
-    axim add-file <name> <version> <file>
+    axim add-file <name> <version> <file> <symlink>
 
 Adds the specified file to a new directory in the store, along with a generated
 meta file, and prints its id.
